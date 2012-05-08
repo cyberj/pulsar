@@ -5,19 +5,16 @@ import sys
 from copy import copy
 import logging
 import traceback
+from collections import deque
 from inspect import isgenerator, isfunction, ismethod, istraceback
 from time import sleep, time
 from collections import namedtuple
 
-try:    #pragma nocover
-    import queue
-except ImportError: #pragma nocover
-    import Queue as queue
-ThreadQueue = queue.Queue
-
 from pulsar import AlreadyCalledError, DeferredFailure, Timeout,\
                      NOT_DONE, CLEAR_ERRORS
 from pulsar.utils.py2py3 import raise_error_trace, map
+
+from . import async
 
 
 __all__ = ['Deferred',
@@ -29,11 +26,9 @@ __all__ = ['Deferred',
            'is_failure',
            'is_async',
            'async_pair',
-           #'async_func_call',
            'make_async',
            'raise_failure',
-           'simple_callback',
-           'ThreadQueue']
+           'simple_callback']
 
 
 logger = logging.getLogger('pulsar.async.defer')
@@ -50,7 +45,7 @@ def is_stack_trace(trace):
     return False
 
 
-class Failure(object):
+class Failure(async.Failure):
     '''Aggregate failures during :class:`Deferred` callbacks.
     
 .. attribute:: traces
@@ -145,7 +140,7 @@ def update_failure(f):
     
     
 def is_failure(data):
-    if isinstance(data,Failure):
+    if isinstance(data, Failure):
         return True
     else:
         return is_stack_trace(data)
@@ -270,7 +265,7 @@ result as argument. Raise exceptions if result is one.'''
     return _
 
 
-class Deferred(object):
+class Deferred(async.Deferred):
     """This is a callback which will be put off until later.
 The idea is the same as the ``twisted.defer.Deferred`` object.
 
@@ -284,13 +279,10 @@ program execution. Instead, it should return a Deferred.
     
 """
     def __init__(self, rid = None, description = None):
-        self._called = False
+        super(Deferred, self).__init__()
         self._description = description
-        self._runningCallbacks = False
-        self.paused = 0
         self.rid = rid
         self._ioloop = None
-        self._callbacks = []
     
     def set_actor(self, actor):
         pass
@@ -300,97 +292,6 @@ program execution. Instead, it should return a Deferred.
         if self.called:
             v += ' (called)'
         return v
-    
-    def __str__(self):
-        return self. __repr__()            
-    
-    @property
-    def called(self):
-        return self._called
-    
-    @property
-    def running(self):
-        return self._runningCallbacks
-    
-    def pause(self):
-        """Stop processing until :meth:`unpause` is called.
-        """
-        self.paused += 1
-
-    def unpause(self):
-        """Process all callbacks made since :meth:`pause` was called.
-        """
-        self.paused -= 1
-        self._run_callbacks()
-    
-    def add_callback(self, callback, raise_on_error = False):
-        """Add a callback as a callable function.
-The function takes at most one argument, the result passed to the
-:meth:`callback` method."""
-        if hasattr(callback,'__call__'):
-            self._callbacks.append(callback)
-            if raise_on_error:
-                self._callbacks.append(raise_failure)
-            self._run_callbacks()
-        return self
-        
-    def _run_callbacks(self):
-        if not self.called or self._runningCallbacks:
-            return
-        
-        if not self.paused:        
-            while self._callbacks:
-                if isinstance(self.result ,Failure):
-                    if self.result.should_stop:
-                        self.result.raise_all()
-                callback = self._callbacks.pop(0)
-                try:
-                    self._runningCallbacks = True
-                    try:
-                        self.result = callback(self.result)
-                    finally:
-                        self._runningCallbacks = False
-                    if isinstance(self.result, Deferred):
-                        # Add a pause
-                        self.pause()
-                        # Add a callback to the result to resume callbacks
-                        self.result.add_callback(self._continue)
-                        break
-                except:
-                    self.result = update_failure(self.result)
-            
-        if isinstance(self.result,Failure):
-            if self.result.should_stop:
-                self.result.raise_all()
-    
-    def add_callback_args(self, callback, *args, **kwargs):
-        return self.add_callback(\
-                lambda result : callback(result,*args,**kwargs))
-        
-    def _continue(self, result):
-        self.result = result
-        self.unpause()
-        return self.result
-    
-    def callback(self, result = None):
-        '''Run registered callbacks with the given *result*.
-This can only be run once. Later calls to this will raise
-:class:`AlreadyCalledError`. If further callbacks are added after
-this point, :meth:`add_callback` will run the *callbacks* immediately.
-
-:return: the *result* input parameter
-'''
-        #TODO, this is a hack, not working properly yet, but required as
-        #un-handled exception stall the asynchronous engine
-        if isinstance(result, Deferred):
-            raise RuntimeError('Received a deferred instance from '
-                               'callback function')
-        if self.called:
-            raise AlreadyCalledError('already called')
-        self.result = as_failure(result) or result
-        self._called = True
-        self._run_callbacks()
-        return self.result
         
     def is_failure(self):
         '''return ``True`` if the result is a failure. If the result is not
