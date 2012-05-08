@@ -501,7 +501,7 @@ class HttpClient(Setting):
     type = int
     default = 2
     desc = """\
-        Set the python parser as default HTTP parser.    
+        Set the HTTP client to use (default is 2 for httplib2)    
         """
     
     def on_start(self):
