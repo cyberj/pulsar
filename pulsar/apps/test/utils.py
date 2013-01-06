@@ -57,7 +57,7 @@ class TestCallable:
         test = self.test
         outcome = self.run_test(actor)
         if self.istest:
-            outcome.addBoth(lambda result:
+            outcome.add_both(lambda result:
                 actor.app.runner.after_test_function_run(test, result))
         return outcome
     

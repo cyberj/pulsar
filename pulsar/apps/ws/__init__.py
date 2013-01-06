@@ -107,7 +107,7 @@ class GeneralWebSocket(object):
         '''Build a websocket server frame from body.'''
         body = maybe_async(body)
         if is_async(body):
-            return body.addBoth(lambda b: self.as_frame(connection, b))
+            return body.add_both(lambda b: self.as_frame(connection, b))
         if is_failure(body):
             # We have a failure. shut down connection
             body.log()

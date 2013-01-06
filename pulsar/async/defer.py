@@ -94,9 +94,6 @@ def is_stack_trace(trace):
                  (trace[2] is None and isinstance(trace[1],trace[0]))
     return False
 
-def is_failure(value):
-    return isinstance(value, Failure)
-
 def as_failure(value, msg=None):
     '''Convert *value* into a :class:`Failure` if it is a stack trace or an
 exception, otherwise returns *value*.'''
@@ -111,9 +108,27 @@ exception, otherwise returns *value*.'''
     else:
         return value
 
-def is_async(obj):
-    '''Check if *obj* is an asynchronous instance'''
-    return isinstance(obj, Deferred)
+try:
+    import twisted
+    from twisted.internet.defer import Deferred as TwistedDeferred
+    from .tx import wrap_deferred
+    
+    def is_failure(value):
+        return isinstance(value, Failure)
+    
+    def is_async(obj):
+        '''Check if *obj* is an asynchronous instance'''
+        return isinstance(obj, (Deferred, TwistedDeferred))
+    
+except ImportError:
+    def is_failure(value):
+        return isinstance(value, Failure)
+    
+    def is_async(obj):
+        '''Check if *obj* is an asynchronous instance'''
+        return isinstance(obj, Deferred)
+    
+    wrap_deferred = lambda d: d
 
 def maybe_async(val, description=None, max_errors=None):
     '''Convert *val* into an asynchronous instance only if *val* is a generator
@@ -129,7 +144,8 @@ In this case it returns the :attr:`Deferred.result` attribute.'''
         except:
             val = sys.exc_info()
     if is_async(val):
-        return val.result_or_self()
+        val = val.result if val.called and not val.callbacks else val
+        return wrap_deferred(val)
     else:
         return as_failure(val)
 
@@ -362,7 +378,7 @@ The implementation is very similar to the ``twisted.defer.Deferred`` object.
 
     def __init__(self, description=None):
         self._description = description
-        self._callbacks = deque()
+        self.callbacks = deque()
 
     def __repr__(self):
         v = self._description or self.__class__.__name__
@@ -388,7 +404,7 @@ The function takes at most one argument, the result passed to the
 be called when an exception occurs."""
         errback = errback if errback is not None else pass_through
         if hasattr(callback, '__call__') and hasattr(errback, '__call__'):
-            self._callbacks.append((callback, errback))
+            self.callbacks.append((callback, errback))
             self._run_callbacks()
         else:
             raise TypeError('callback must be callable')
@@ -398,7 +414,7 @@ be called when an exception occurs."""
         '''Same as :meth:`add_callback` but only for errors.'''
         return self.add_callback(pass_through, errback)
 
-    def addBoth(self, callback):
+    def add_both(self, callback):
         '''Equivalent to `self.add_callback(callback, callback)`.'''
         return self.add_callback(callback, callback)
 
@@ -424,19 +440,12 @@ this point, :meth:`add_callback` will run the *callbacks* immediately.
         self._run_callbacks()
         return self.result
 
-    def result_or_self(self):
-        '''It returns the :attr:`result` only if available and all
-callbacks have been consumed, otherwise it returns this :class:`Deferred`.
-Users should use this method to obtain the result, rather than accessing
-directly the :attr:`result` attribute.'''
-        return self.result if self._called and not self._callbacks else self
-
     ##################################################    INTERNAL METHODS
     def _run_callbacks(self):
         if not self._called or self._runningCallbacks or self.paused:
             return
-        while self._callbacks:
-            callbacks = self._callbacks.popleft()
+        while self.callbacks:
+            callbacks = self.callbacks.popleft()
             callback = callbacks[is_failure(self.result)]
             try:
                 self._runningCallbacks = True
@@ -451,7 +460,7 @@ directly the :attr:`result` attribute.'''
                     # Add a pause
                     self._pause()
                     # Add a callback to the result to resume callbacks
-                    self.result.addBoth(self._continue)
+                    self.result.add_both(self._continue)
                     break
 
     def _pause(self):
@@ -473,7 +482,7 @@ directly the :attr:`result` attribute.'''
             self.result = Failure(e)
         else:
             self.result.append(e)
-
+    
 
 class DeferredGenerator(Deferred):
     '''A :class:`Deferred` for a generator over, possibly, deferred objects.
@@ -544,7 +553,7 @@ current thread.'''
                 # The result is asynchronous and it is not ready yet.
                 # We pause the generator and attach a callback to continue
                 # on the same thread.
-                return result.addBoth(self._resume_in_thread)
+                return result.add_both(self._resume_in_thread)
             if result == CLEAR_ERRORS:
                 self.errors.clear()
                 result = None
@@ -661,7 +670,7 @@ both ``list`` and ``dict`` types.'''
 
     def _add_deferred(self, key, value):
         self._deferred[key] = value
-        value.addBoth(lambda result: self._deferred_done(key, result))
+        value.add_both(lambda result: self._deferred_done(key, result))
 
     def _deferred_done(self, key, result):
         self._deferred.pop(key, None)

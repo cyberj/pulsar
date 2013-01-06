@@ -593,7 +593,7 @@ parsed.'''
         if self.async:
             cbk = Deferred()
             if data:
-                cbk.addBoth(self._got_result)
+                cbk.add_both(self._got_result)
                 self.exec_queue.append((data, cbk))
                 self.sock.ioloop.add_callback(self._consume_next)
             else:
@@ -619,7 +619,7 @@ parsed.'''
                     .add_callback(self._read, self.close)
             msg = maybe_async(msg)
             if is_async(msg):
-                msg.addBoth(cbk.callback)
+                msg.add_both(cbk.callback)
             else:
                 cbk.callback(msg)
             

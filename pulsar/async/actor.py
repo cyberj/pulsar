@@ -423,7 +423,7 @@ properly this actor will go out of scope.'''
                 self.logger.error('Unhandle error while stopping',
                                   exc_info=True)
                 res = None
-            return res.addBoth(self.exit) if is_async(res) else self.exit()
+            return res.add_both(self.exit) if is_async(res) else self.exit()
     
     def exit(self, result=None):
         '''Exit from the :class:`Actor` domain.'''

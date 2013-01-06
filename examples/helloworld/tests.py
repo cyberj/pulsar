@@ -17,7 +17,7 @@ class TestHelloWorldThread(unittest.TestCase):
     
     @classmethod
     def setUpClass(cls):
-        name = name=cls.name()
+        name = cls.name()
         kwargs = {'%s__bind' % name: '127.0.0.1:0'}
         s = server(name=cls.name(), concurrency=cls.concurrency, **kwargs)
         outcome = send('arbiter', 'run', s)

@@ -106,7 +106,7 @@ functional.
         else:
             self.aid = aid
             # simply listent for the calbacks and errorbacks
-            msg.addBoth(self.callback)
+            msg.add_both(self.callback)
     
     def __repr__(self):
         return '%s(%s)' % (self.__class__, self.aid)

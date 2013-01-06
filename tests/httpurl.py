@@ -209,7 +209,7 @@ def request_callback(result):
     return result
     
 def request(r):
-    return make_async(r).addBoth(request_callback)
+    return make_async(r).add_both(request_callback)
 
 
 class TestHttpClientBase(unittest.TestCase):
@@ -393,7 +393,7 @@ class TestHttpClient(TestHttpClientBase):
         r = safe_async(http.get, (self.httpbin('redirect', '5'),),
                                 {'max_redirects': 2})
         # do this so that the test suite does not fail on the test
-        yield r.addBoth(lambda f: [f])
+        yield r.add_both(lambda f: [f])
         r = r.result[0]
         self.assertTrue(is_failure(r))
         self.assertTrue(isinstance(r.trace[1], httpurl.TooManyRedirects))
