@@ -10,6 +10,7 @@ except ImportError: #pragma    nocover
     import pulsar
 
 from pulsar.apps import wsgi
+from pulsar.async.tx import pulsar_reactor
 
 
 class imap(pulsar.Setting):
@@ -19,8 +20,7 @@ class imap(pulsar.Setting):
 
 
 def email_client(strport):
-    from twisted.internet import reactor
-    endpoint = endpoints.clientFromString(reactor, strport)
+    endpoint = endpoints.clientFromString(pulsar_reactor, strport)
     factory = protocol.Factory()
     factory.protocol = imap4.IMAP4Client
     return endpoint.connect(factory)

@@ -1,7 +1,9 @@
 '''Pulsar & twisted utilities'''
 import twisted
-from twisted.internet import reactor
+from twisted.internet.posixbase import PosixReactorBase
 from twisted.internet.defer import Deferred as TwistedDeferred
+
+from .access import thread_ioloop
 
 
 def wrap_deferred(d):
@@ -10,14 +12,15 @@ def wrap_deferred(d):
     return d
 
 
-class pulsar_reactor:
-    '''A proxy for the default twisted reactor.'''
+class PulsarReactor(PosixReactorBase):
+    '''A proxy for the a twisted reactor.'''
     
-    def callLater(self, _seconds, _f, *args, **kw):
+    def installWaker(self):
         pass
     
-    def __getattr__(self, attrname):
-        return getattr(reactor, attrname)
+    def callLater(self, _seconds, _f, *args, **kw):
+        ioloop = thread_ioloop()
+        ioloop.call_later(_seconds, _f, *args, **kw)
     
     
-pulsar_reactor = pulsar_reactor()
+pulsar_reactor = PulsarReactor()

@@ -185,6 +185,13 @@ whether that callback was invoked before or after ioloop.start.'''
         """Returns true if this IOLoop is currently running."""
         return self._running
 
+    def call_later(seconds, callback, *args, **kw):
+        if seconds:
+            deadline = time.time() + seconds
+            self.add_timeout(deadline, lambda : callback(*args, **kw))
+        else:
+            self.add_callback(lambda : callback(*args, **kw))
+            
     def add_timeout(self, deadline, callback):
         """Add a timeout *callback*. A timeout callback  it is called
 at the time *deadline* from the :class:`IOLoop`.
@@ -197,7 +204,7 @@ It returns an handle that may be passed to remove_timeout to cancel."""
         """Cancels a pending *timeout*. The argument is an handle as returned
 by the :meth:`add_timeout` method."""
         self._timeouts.remove(timeout)
-
+            
     def add_callback(self, callback, wake=True):
         """Calls the given callback on the next I/O loop iteration.
 
