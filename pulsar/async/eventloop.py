@@ -5,7 +5,6 @@ import logging
 import traceback
 import signal
 import errno
-import bisect
 import socket
 from threading import current_thread
 
@@ -244,7 +243,6 @@ It returns an handle that may be passed to remove_timeout to cancel."""
             timeout = TimedCall(timer() + seconds, callback, args,
                                 self.remove_timeout)
             heapq.heappush(self._scheduled, timeout)
-            #bisect.insort(self._scheduled, timeout)
             return timeout
         else:
             return self.call_soon(callback, *args)
