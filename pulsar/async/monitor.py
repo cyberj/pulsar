@@ -316,7 +316,7 @@ Users shouldn't need to override this method, but use
             self.spawn_actors()
             self.stop_actors()
             self.monitor_task()
-        self.ioloop.add_callback(self.periodic_task, False)
+        self.ioloop.call_soon(self.periodic_task)
 
     # HOOKS
     def on_stop(self):

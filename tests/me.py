@@ -101,7 +101,7 @@ class TestTestWorker(unittest.TestCase):
         # thread
         def _callback():
             d.callback(current_thread().ident)
-        worker.ioloop.add_timeout(time.time()+0.2, _callback)
+        worker.ioloop.call_later(0.2, _callback)
         yield d
         self.assertNotEqual(d.result, worker.tid)
         self.assertEqual(worker.ioloop.tid, d.result)

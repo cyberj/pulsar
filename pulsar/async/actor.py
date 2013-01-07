@@ -447,9 +447,9 @@ properly this actor will go out of scope.'''
                 self.send('arbiter', 'notify', self.info())
                 secs = max(ACTOR_TIMEOUT_TOLERANCE*self.cfg.timeout, MIN_NOTIFY)
                 next = time() + min(secs, MAX_NOTIFY)
-                self.ioloop.add_timeout(next, self.periodic_task)
+                self.ioloop.call_later(next, self.periodic_task)
             else:
-                self.ioloop.add_callback(self.periodic_task, False)
+                self.ioloop.call_soon(self.periodic_task)
         
     def proxy_mailbox(self, address):
         m = self.proxy_mailboxes.get(address)

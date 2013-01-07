@@ -55,13 +55,18 @@ class CouldNotParse(PulsarInternetException):
     pass
 
 
-class DeferredFailure(PulsarException):
+class DeferredFailure(ValueError):
     pass
 
 
-class AlreadyCalledError(PulsarException):
+class AlreadyCalledError(ValueError):
     '''Raised when a :class:`Deferred` instance receives more than
 one :meth:`Deferred.callback`.'''
+
+
+class AlreadyCancelled(ValueError):
+    '''Raised when a :class:`Timeout` instance receives more than
+one :meth:`Deferred.cancel`.'''
 
 
 class CannotCallBackError(PulsarException):

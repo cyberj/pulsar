@@ -182,7 +182,7 @@ Users access the arbiter (in the arbiter process domain) by the high level api::
                 self.cfg.arbiter_task(self)
             except:
                 pass
-        self.ioloop.add_callback(self.periodic_task, False)
+        self.ioloop.call_soon(self.periodic_task)
 
     @async()
     def on_stop(self):

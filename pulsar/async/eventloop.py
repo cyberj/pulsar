@@ -1,15 +1,15 @@
 import os
 import sys
+import heapq
 import logging
 import traceback
-import time
 import signal
 import errno
 import bisect
 import socket
 from threading import current_thread
 
-from pulsar import HaltServer, Timeout
+from pulsar import Timeout, AlreadyCancelled, AlreadyCalledError, system
 from pulsar.utils.system import IObase, IOpoll, close_on_exec, platform, Waker
 from pulsar.utils.security import gen_unique_id
 from pulsar.utils.log import Synchronized
@@ -18,10 +18,16 @@ from pulsar.utils.structures import WeakList
 from .defer import Deferred, is_async, maybe_async, thread_loop, make_async,\
                     log_failure, EXIT_EXCEPTIONS
 
-__all__ = ['IOLoop', 'PeriodicCallback', 'loop_timeout']
+__all__ = ['IOLoop', 'PeriodicCallback', 'TimedCall']
 
 LOGGER = logging.getLogger('pulsar.eventloop')
 
+if sys.version_info >= (3, 3):
+    import time
+    timer = time.monotonic
+else:   #pragma    nocover
+    timer = system.default_timer
+    
 def file_descriptor(fd):
     if hasattr(fd, 'fileno'):
         return fd.fileno()
@@ -31,6 +37,31 @@ def file_descriptor(fd):
 def setid(self):
     self.tid = current_thread().ident
     self.pid = os.getpid()
+
+
+class TimedCall(object):
+    """An IOLoop timeout, a UNIX timestamp and a callback"""
+
+    def __init__(self, deadline, callback, args, canceller):
+        self.deadline = deadline
+        self.canceller = canceller
+        self.func = callback
+        self.args = args
+        self.cancelled = self.called = False
+
+    def __lt__(self, other):
+        return self.deadline < other.deadline
+        
+    def cancel(self):
+        '''Attempt to cancel the callback.'''
+        if self.cancelled:
+            raise AlreadyCancelled()
+        elif self.called:
+            raise AlreadyCalledError()
+        else:
+            self.canceller(self)
+            self.cancelled = True
+            del self.func
 
 
 class LoopGuard(object):
@@ -43,7 +74,7 @@ class LoopGuard(object):
         loop.logger.subdebug("Starting event loop")
         loop._running = True
         if not loop._started:
-            loop._started = time.time()
+            loop._started = timer()
         setid(loop)
         loop._on_exit = Deferred(description='IOloop.on_exit')
         return self
@@ -55,9 +86,27 @@ class LoopGuard(object):
         loop._on_exit.callback(loop)
 
 
+class ReadWrite(IObase):
+    def __init__(self, read=None, write=None):
+        self.handle_read = read
+        self.handle_write = write
+        self.handle_error = None
+
+    def __call__(self, fd, events):
+        if events & self.READ:
+            if self.handle_read:
+                self.handle_read() 
+        if events & self.WRITE:
+            if self.handle_write:
+                self.handle_write()
+        if events & self.ERROR:
+            if self.handle_write:
+                self.handle_error()
+        
+        
 class IOLoop(IObase, Synchronized):
-    """\
-A level-triggered I/O event loop adapted from tornado.
+    """A level-triggered I/O event loop adapted from tornado to
+conform with pep-3156.
 
 :parameter io: The I/O implementation. If not supplied, the best possible
     implementation available will be used. On posix system this is ``epoll``,
@@ -112,7 +161,8 @@ A level-triggered I/O event loop adapted from tornado.
         self._handlers = {}
         self._events = {}
         self._callbacks = []
-        self._timeouts = []
+        self._scheduled = []
+        self._state = None
         self._started = None
         self._running = False
         self.num_loops = 0
@@ -185,39 +235,62 @@ whether that callback was invoked before or after ioloop.start.'''
         """Returns true if this IOLoop is currently running."""
         return self._running
 
-    def call_later(seconds, callback, *args, **kw):
-        if seconds:
-            deadline = time.time() + seconds
-            self.add_timeout(deadline, lambda : callback(*args, **kw))
-        else:
-            self.add_callback(lambda : callback(*args, **kw))
-            
-    def add_timeout(self, deadline, callback):
-        """Add a timeout *callback*. A timeout callback  it is called
+    def call_later(self, seconds, callback, *args):
+        """Add a *callback* to be executed approximately *seconds* in the
+future, once, unless cancelled. A timeout callback  it is called
 at the time *deadline* from the :class:`IOLoop`.
 It returns an handle that may be passed to remove_timeout to cancel."""
-        timeout = _Timeout(deadline, callback)
-        bisect.insort(self._timeouts, timeout)
+        if seconds > 0:
+            timeout = TimedCall(timer() + seconds, callback, args,
+                                self.remove_timeout)
+            heapq.heappush(self._scheduled, timeout)
+            #bisect.insort(self._scheduled, timeout)
+            return timeout
+        else:
+            return self.call_soon(callback, *args)
+
+    def call_soon(self, callback, *args):
+        '''Equivalent to ``self.call_later(0, callback, *args, **kw)``.'''
+        timeout = TimedCall(None, callback, args, self.remove_timeout)
+        self._callbacks.append(timeout)
+        return timeout
+    
+    def call_soon_threadsafe(self, callback, *args):
+        '''Equivalent to ``self.call_later(0, callback, *args, **kw)``.'''
+        timeout = self.call_soon(callback, *args)
+        self.wake()
         return timeout
 
-    def remove_timeout(self, timeout):
-        """Cancels a pending *timeout*. The argument is an handle as returned
-by the :meth:`add_timeout` method."""
-        self._timeouts.remove(timeout)
-            
-    def add_callback(self, callback, wake=True):
-        """Calls the given callback on the next I/O loop iteration.
-
-        It is safe to call this method from any thread at any time.
-        Note that this is the *only* method in IOLoop that makes this
-        guarantee; all other interaction with the IOLoop must be done
-        from that IOLoop's thread.  add_callback() may be used to transfer
-        control from other threads to the IOLoop's thread.
-        """
-        self._callbacks.append(callback)
-        if wake:
-            self.wake()
-
+    def add_reader(self, fd, callback, *args):
+        cbk = lambda : callback(*args)    
+        if fd in self._handlers:
+            self._handlers[fd].handle_read = cbk
+            self.update_handler(fd, self.READ)
+        else:
+            self.add_handler(fd, ReadWrite(read=cbk), self.READ)
+        
+    def add_writer(self, fd, callback, *args):
+        cbk = lambda : callback(*args)
+        if fd in self._handlers:
+            self._handlers[fd].handle_write = cbk
+            self.update_handler(fd, self.WRITE)
+        else:
+            self.add_handler(fd, ReadWrite(write=cbk), self.WRITE)
+        
+    def remove_reader(self, fd):
+        if fd in self._handlers:
+            hnd = self._handlers[fd]
+            hnd.handle_read = None
+            if not hnd.handle_read and not hnd.handle_write:
+                return self.remove_handler(fd)
+    
+    def remove_writer(self, fd):
+        if fd in self._handlers:
+            hnd = self._handlers[fd]
+            hnd.handle_write = None
+            if not hnd.handle_read and not hnd.handle_write:
+                return self.remove_handler(fd)
+        
     def add_periodic(self, callback, period):
         """Add a :class:`PeriodicCallback` to the event loop."""
         p = PeriodicCallback(callback, period, self)
@@ -228,16 +301,21 @@ by the :meth:`add_timeout` method."""
         '''Wake up the eventloop.'''
         if self.running():
             self._waker.wake()
+            
+    def remove_timeout(self, timeout):
+        """Cancels a pending *timeout*. The argument is an handle as returned
+by the :meth:`add_timeout` method."""
+        self._scheduled.remove(timeout)
 
     ############################################################ INTERNALS    
-    def _run_callback(self, callback, name='callback'):
+    def _run_callback(self, callback):
         try:
-            callback()
+            callback.called = True
+            callback.func(*callback.args)
         except EXIT_EXCEPTIONS:
             raise
         except:
-            self.logger.critical('Unhandled exception in %s.', name,
-                                 exc_info=True)
+            self.logger.critical('Exception in callback.', exc_info=True)
 
     def _run(self):
         """Runs the I/O loop until one of the I/O handlers calls stop(), which
@@ -254,13 +332,13 @@ will make the loop stop after the current event iteration completes."""
                     self._callbacks = []
                     for callback in callbacks:
                         _run_callback(callback)
-                if self._timeouts:
-                    now = time.time()
-                    while self._timeouts and self._timeouts[0].deadline <= now:
-                        timeout = self._timeouts.pop(0)
-                        self._run_callback(timeout.callback)
-                    if self._timeouts:
-                        milliseconds = self._timeouts[0].deadline - now
+                if self._scheduled:
+                    now = timer()
+                    while self._scheduled and self._scheduled[0].deadline <= now:
+                        timeout = self._scheduled.pop(0)
+                        self._run_callback(timeout)
+                    if self._scheduled:
+                        milliseconds = self._scheduled[0].deadline - now
                         poll_timeout = min(milliseconds, poll_timeout)
                 # A chance to exit
                 if not self._running:
@@ -309,19 +387,6 @@ will make the loop stop after the current event iteration completes."""
                                           fd, exc_info=True)
 
 
-class _Timeout(object):
-    """An IOLoop timeout, a UNIX timestamp and a callback"""
-    __slots__ = ('deadline', 'callback')
-
-    def __init__(self, deadline, callback):
-        self.deadline = deadline
-        self.callback = callback
-
-    def __lt__(self, other):
-        return ((self.deadline, id(self.callback)) <
-                (other.deadline, id(other.callback)))
-
-
 class PeriodicCallback(object):
     """Schedules the given callback to be called periodically.
 
@@ -335,8 +400,7 @@ class PeriodicCallback(object):
 
     def start(self):
         self._running = True
-        timeout = time.time() + self.callback_time
-        self.ioloop.add_timeout(timeout, self._run)
+        self.ioloop.call_later(self.callback_time, self._run)
 
     def stop(self):
         self._running = False
@@ -352,25 +416,4 @@ class PeriodicCallback(object):
             LOGGER.error("Error in periodic callback", exc_info=True)
         if self._running:
             self.start()
-
-
-class _not_called_exception:
-
-    def __init__(self, value):
-        self.value = value
-
-    def __call__(self):
-        if not self.value.called:
-            try:
-                raise Timeout('"%s" timed out.' % self.value)
-            except:
-                self.value.callback(sys.exc_info())
-
-
-def loop_timeout(value, timeout, ioloop=None):
-    value = maybe_async(value)
-    if timeout and is_async(value):
-        ioloop = ioloop or thread_loop()
-        return ioloop.add_timeout(time.time() + timeout,
-                                  _not_called_exception(value))
 

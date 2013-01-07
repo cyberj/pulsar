@@ -30,14 +30,14 @@ class DodgyActor(pulsar.Actor):
 class HaltActor(pulsar.Actor):
     
     def on_start(self):
-        self.requestloop.add_callback(self._halt)
+        self.requestloop.call_soon(self._halt)
         
     def _halt(self):
         if self.params.done:
             raise pulsar.HaltServer()
         else:
             self.params.done = True
-            self.requestloop.add_callback(self._halt)
+            self.requestloop.call_soon(self._halt)
             raise ValueError()
 
     

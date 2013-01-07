@@ -86,7 +86,7 @@ class TestDeferred(unittest.TestCase):
         self.assertTrue(d.called)
         self.assertEqual(d.paused,1)
         self.assertTrue(is_async(result))
-        self.assertEqual(len(result._callbacks),1)
+        self.assertEqual(len(result.callbacks), 1)
         self.assertFalse(result.called)
         result.set_result('luca')
         self.assertTrue(result.called)
@@ -106,8 +106,8 @@ class TestDeferred(unittest.TestCase):
         result = d.callback('ciao')
         self.assertTrue(d.called)
         self.assertEqual(d.paused,1)
-        self.assertEqual(len(d._callbacks), 2)
-        self.assertEqual(len(rd._callbacks), 1)
+        self.assertEqual(len(d.callbacks), 2)
+        self.assertEqual(len(rd.callbacks), 1)
         #
         self.assertEqual(rd.r, ('ciao',))
         self.assertFalse(a.called)
@@ -132,8 +132,8 @@ class TestDeferred(unittest.TestCase):
         self.assertTrue(d.called)
         self.assertEqual(d.paused, 1)
         # The generator has added its consume callback
-        self.assertEqual(len(d._callbacks), 2)
-        self.assertEqual(len(rd._callbacks), 1)
+        self.assertEqual(len(d.callbacks), 2)
+        self.assertEqual(len(rd.callbacks), 1)
         #
         self.assertEqual(rd.r, ('ciao',))
         self.assertFalse(a.called)

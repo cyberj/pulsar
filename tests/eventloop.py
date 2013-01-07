@@ -12,37 +12,36 @@ class TestEventLoop(unittest.TestCase):
         self.assertTrue(ioloop)
         self.assertNotEqual(ioloop.tid, current_thread().ident)
         
-    def test_add_callback(self):
+    def test_call_soon(self):
         ioloop = pulsar.thread_ioloop()
         d = pulsar.Deferred()
-        ioloop.add_callback(lambda: d.callback(current_thread().ident))
+        ioloop.call_soon_threadsafe(lambda: d.callback(current_thread().ident))
         # we should be able to wait less than a second
         yield d
         self.assertEqual(d.result, ioloop.tid)
         
-    def test_add_timeout(self):
+    def test_call_later(self):
         ioloop = pulsar.thread_ioloop()
         d = pulsar.Deferred()
-        now = time.time()
-        timeout1 = ioloop.add_timeout(now+20,
+        timeout1 = ioloop.call_later(20,
                             lambda: d.callback(current_thread().ident))
-        timeout2 = ioloop.add_timeout(now+10,
+        timeout2 = ioloop.call_later(10,
                             lambda: d.callback(current_thread().ident))
         # lets wake the ioloop
         ioloop.wake()
-        self.assertTrue(timeout1 in ioloop._timeouts)
-        self.assertTrue(timeout2 in ioloop._timeouts)
+        self.assertTrue(timeout1 in ioloop._scheduled)
+        self.assertTrue(timeout2 in ioloop._scheduled)
         ioloop.remove_timeout(timeout1)
         ioloop.remove_timeout(timeout2)
-        self.assertFalse(timeout1 in ioloop._timeouts)
-        self.assertFalse(timeout2 in ioloop._timeouts)
-        timeout1 = ioloop.add_timeout(now+0.1,
+        self.assertFalse(timeout1 in ioloop._scheduled)
+        self.assertFalse(timeout2 in ioloop._scheduled)
+        timeout1 = ioloop.call_later(0.1,
                             lambda: d.callback(current_thread().ident))
         ioloop.wake()
         time.sleep(0.2)
         self.assertTrue(d.called)
         self.assertEqual(d.result, ioloop.tid)
-        self.assertFalse(timeout1 in ioloop._timeouts)
+        self.assertFalse(timeout1 in ioloop._scheduled)
         
     def test_periodic(self):
         ioloop = pulsar.thread_ioloop()

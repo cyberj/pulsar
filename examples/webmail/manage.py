@@ -1,4 +1,5 @@
-'''A simple webmail client. It requires twisted.'''
+'''A simple webmail client. It requires twisted, pyOpenSSL and
+pywin32 if running on windows.'''
 import twisted
 from twisted.internet import protocol, defer, endpoints, task
 from twisted.mail import imap4
@@ -20,6 +21,7 @@ class imap(pulsar.Setting):
 
 
 def email_client(strport):
+    pulsar_reactor.run()
     endpoint = endpoints.clientFromString(pulsar_reactor, strport)
     factory = protocol.Factory()
     factory.protocol = imap4.IMAP4Client

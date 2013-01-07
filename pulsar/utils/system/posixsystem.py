@@ -4,6 +4,7 @@ import resource
 import grp
 import pwd
 import signal
+import time
 from multiprocessing import Pipe
 
 from .base import *
@@ -15,7 +16,8 @@ __all__ = ['IOpoll',
            'SIGQUIT',
            'get_uid',
            'get_gid',
-           'get_maxfd']
+           'get_maxfd',
+           'default_timer']
 
 
 import select
@@ -24,6 +26,7 @@ if hasattr(select,'epoll'):
 else:   #pragma    nocover
     IOpoll = IOselect
 
+default_timer = time.clock
 # The standard signal quit
 SIGQUIT = signal.SIGQUIT
 # Default maximum for the number of available file descriptors.

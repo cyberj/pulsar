@@ -13,7 +13,7 @@ from pulsar.utils.httpurl import to_bytes
 
 from .defer import maybe_async, pickle, is_async, log_failure,\
                     async, is_failure, ispy3k, raise_failure, CLEAR_ERRORS
-from .iostream import AsyncIOStream, AsyncSocketServer,\
+from .transports import AsyncSocketServer,\
                         AsyncConnection, ReconnectingClient, AsyncResponse
 from .access import get_actor
 
@@ -213,7 +213,7 @@ of execution.'''
                                           onthread=actor.cpubound,
                                           timeout=None)
         if not server.actor.is_arbiter():
-            server.ioloop.add_callback(server.send_mailbox_address)
+            server.ioloop.call_soon_threadsafe(server.send_mailbox_address)
         return server
 
     def send_mailbox_address(self):

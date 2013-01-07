@@ -1,19 +1,15 @@
-import sys
 import time
 import math
 
-if sys.platform == "win32": #pragma    nocover
-    default_timer = time.clock
-else:
-    default_timer = time.time
-    
 import pulsar
+from pulsar import system
 from pulsar.utils.httpurl import range
-
 from pulsar.apps import test
 
+default_timer = system.default_timer
 BENCHMARK_TEMPLATE = '\nRepeated {0[number]} times.\
  Average {0[mean]} secs, Stdev {0[std]}.'
+
 
 class BenchTest(test.WrapTest):
     __benchmark__ = True

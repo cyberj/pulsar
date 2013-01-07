@@ -1,9 +1,13 @@
 from pulsar import send, get_application, is_async
 from pulsar.apps.test import unittest, run_on_arbiter
 
-from .manage import server, email_client
+try:
+    from .manage import server, email_client
+    has_twisted = True
+except ImportError:
+    has_twisted = False
 
-
+@unittest.skipUnless(has_twisted, 'Requires twisted')
 class TestWebMailThread(unittest.TestCase):
     app = None
     concurrency = 'thread'
@@ -35,4 +39,4 @@ class TestWebMailThread(unittest.TestCase):
         self.assertTrue(is_async(ec))
         yield ec
         client = ec.result
-        self.assertTrue()
+        self.assertTrue(client)

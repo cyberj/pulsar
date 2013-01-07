@@ -4,6 +4,7 @@ import ctypes.wintypes
 import errno
 import socket
 import getpass
+import time
 from time import sleep
 
 from pulsar.utils.sock import socket_pair
@@ -18,8 +19,10 @@ __all__ = ['IOpoll',
            'SIGQUIT',
            'get_uid',
            'get_gid',
-           'get_maxfd']
+           'get_maxfd',
+           'default_timer']
 
+default_timer = time.time
 # See: http://msdn.microsoft.com/en-us/library/ms724935(VS.85).aspx
 SetHandleInformation = ctypes.windll.kernel32.SetHandleInformation
 SetHandleInformation.argtypes = (ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD,\

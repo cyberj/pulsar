@@ -1,3 +1,9 @@
+twisted branch
+==============================
+* Compatible with twisted_, check the webmail example via the PulsarReactor.
+* Refactored :class:`pulsar.IOLoop` to conform with pep-3156_.
+* **376 regression tests**, **87% coverage**.
+
 Ver. 0.4.4
 ==============================
 * Documentation for development version hosted on github.
@@ -127,3 +133,5 @@ Ver. 0.1.0 - 2011-Aug-24
 
 .. _psutil: http://code.google.com/p/psutil/
 .. _pypy: http://pypy.org/
+.. _twisted: http://twistedmatrix.com
+.. _pep-3156: http://www.python.org/dev/peps/pep-3156/

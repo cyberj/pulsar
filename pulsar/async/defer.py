@@ -6,7 +6,6 @@ import traceback
 from threading import current_thread, local
 from collections import deque, namedtuple
 from inspect import isgenerator, isfunction, ismethod, istraceback
-from time import sleep
 
 from pulsar import AlreadyCalledError, DeferredFailure, HaltServer
 
@@ -515,7 +514,7 @@ occurred.
             # Generators are not thread-safe. If the callback is on a different
             # thread we restart the generator on the original thread
             # by adding a callback in the generator eventloop.
-            self.loop.add_callback(lambda: self._consume(result))
+            self.loop.call_soon_threadsafe(self._consume, result)
         else:
             self._consume(result)
         # IMPORTANT! We return the original result.
@@ -546,7 +545,7 @@ current thread.'''
                 # The NOT_DONE object indicates that the generator needs to
                 # abort so that the event loop can continue. This generator
                 # will resume at the next event loop.
-                self.loop.add_callback(self._consume, wake=False)
+                self.loop.call_soon(self._consume)
                 return self
             result = maybe_async(result)
             if is_async(result):

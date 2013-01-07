@@ -122,7 +122,7 @@ class TestPulsarStreams(unittest.TestCase):
                 self.assertRaises(RuntimeError, io.connect, self.server.address)
         cbk = _test()
         # we need to run this test on the ioloop thread
-        io.ioloop.add_callback(cbk)
+        io.ioloop.call_soon_threadsafe(cbk)
         yield cbk
         
     def test_already_reading(self):
@@ -139,7 +139,8 @@ class TestPulsarStreams(unittest.TestCase):
                 self.assertRaises(RuntimeError, io.read)
         cbk = _test()
         # we need to run this test on the ioloop thread
-        io.ioloop.add_callback(cbk)
+        io.ioloop.call_soon_threadsafe(cbk)
+        yield cbk
         
     def testReadTimeout(self):
         client = self.client(timeout=0)
