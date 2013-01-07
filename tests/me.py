@@ -72,7 +72,7 @@ class TestTestWorker(unittest.TestCase):
         
     def testIOloop(self):
         worker = pulsar.get_actor()
-        ioloop = pulsar.thread_ioloop()
+        ioloop = pulsar.get_event_loop()
         self.assertTrue(ioloop.running())
         self.assertNotEqual(worker.requestloop, ioloop)
         self.assertEqual(worker.ioloop, ioloop)

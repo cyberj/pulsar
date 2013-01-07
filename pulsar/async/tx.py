@@ -3,7 +3,7 @@ import twisted
 from twisted.internet.posixbase import PosixReactorBase
 from twisted.internet.defer import Deferred as TwistedDeferred
 
-from .access import thread_ioloop as get_event_loop
+from .access import get_event_loop
 
 
 def wrap_deferred(d):

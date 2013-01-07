@@ -14,7 +14,7 @@ from pulsar.utils.security import gen_unique_id
 from pulsar.utils.log import Synchronized
 from pulsar.utils.structures import WeakList
 
-from .defer import Deferred, is_async, maybe_async, thread_loop, make_async,\
+from .defer import Deferred, is_async, maybe_async, make_async,\
                     log_failure, EXIT_EXCEPTIONS
 
 __all__ = ['IOLoop', 'PeriodicCallback', 'TimedCall']

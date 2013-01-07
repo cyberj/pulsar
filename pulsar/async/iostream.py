@@ -13,7 +13,7 @@ from pulsar import create_socket, server_socket, create_client_socket,\
 from pulsar.utils.structures import merge_prefix
 from .defer import Deferred, is_async, is_failure, async, maybe_async,\
                         safe_async, log_failure, NOT_DONE, range
-from .access import thread_ioloop as get_event_loop
+from .access import get_event_loop
 
 LOGGER = logging.getLogger('pulsar.iostream')
 

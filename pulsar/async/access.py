@@ -2,8 +2,8 @@ import threading
 from threading import Thread, current_thread
 from multiprocessing import current_process
 
-__all__ = ['thread_loop',
-           'thread_ioloop',
+__all__ = ['get_request_loop',
+           'get_event_loop',
            'get_actor',
            'set_local_data',
            'is_mainthread',
@@ -50,12 +50,12 @@ is None, it will get the value otherwise it will set the value.'''
             setattr(loc, name, value)
     return getattr(loc, name, None)
 
-def thread_loop(ioloop=None):
+def get_request_loop(ioloop=None):
     '''Returns the event loop (:class:`IOLoop`) on the current thread
 if available.'''
-    return thread_local_data('eventloop', ioloop)
+    return thread_local_data('requestloop', ioloop)
 
-def thread_ioloop(ioloop=None):
+def get_event_loop(ioloop=None):
     '''Returns the :class:`IOLoop` on the current thread if available.'''
     return thread_local_data('ioloop', ioloop)
 
@@ -82,8 +82,8 @@ actors with thread concurrency ince they live in the arbiter process domain.'''
 
 def set_local_data(actor):
     set_actor(actor)
-    thread_loop(actor.requestloop)
-    thread_ioloop(actor.ioloop)
+    get_request_loop(actor.requestloop)
+    get_event_loop(actor.ioloop)
     
     
 class PulsarThread(Thread):

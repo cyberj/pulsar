@@ -9,7 +9,7 @@ from inspect import isgenerator, isfunction, ismethod, istraceback
 
 from pulsar import AlreadyCalledError, DeferredFailure, HaltServer
 
-from .access import thread_loop
+from .access import get_request_loop
 
 EXIT_EXCEPTIONS = (KeyboardInterrupt, SystemExit, HaltServer)
 
@@ -503,7 +503,7 @@ occurred.
         self._consumed = 0
         self.errors = Failure()
         super(DeferredGenerator,self).__init__(description=description)
-        self.loop = thread_loop()
+        self.loop = get_request_loop()
         self._consume()
 
     def _resume_in_thread(self, result=None):

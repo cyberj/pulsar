@@ -8,12 +8,12 @@ from pulsar.apps.test import unittest
 class TestEventLoop(unittest.TestCase):
     
     def testIOloop(self):
-        ioloop = pulsar.thread_ioloop()
+        ioloop = pulsar.get_event_loop()
         self.assertTrue(ioloop)
         self.assertNotEqual(ioloop.tid, current_thread().ident)
         
     def test_call_soon(self):
-        ioloop = pulsar.thread_ioloop()
+        ioloop = pulsar.get_event_loop()
         d = pulsar.Deferred()
         ioloop.call_soon_threadsafe(lambda: d.callback(current_thread().ident))
         # we should be able to wait less than a second
@@ -21,7 +21,7 @@ class TestEventLoop(unittest.TestCase):
         self.assertEqual(d.result, ioloop.tid)
         
     def test_call_later(self):
-        ioloop = pulsar.thread_ioloop()
+        ioloop = pulsar.get_event_loop()
         d = pulsar.Deferred()
         timeout1 = ioloop.call_later(20,
                             lambda: d.callback(current_thread().ident))
@@ -44,7 +44,7 @@ class TestEventLoop(unittest.TestCase):
         self.assertFalse(timeout1 in ioloop._scheduled)
         
     def test_periodic(self):
-        ioloop = pulsar.thread_ioloop()
+        ioloop = pulsar.get_event_loop()
         d = pulsar.Deferred()
         class p:
             def __init__(self):
