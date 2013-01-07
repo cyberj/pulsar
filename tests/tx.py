@@ -82,10 +82,10 @@ class TestTwistedIntegration(unittest.TestCase):
         self.assertTrue(is_async(client))
         yield client
         client = client.result
-        future = client.sendMessage("Hello")
+        future = client.sendMessage(b'Hello')
         yield future
-        self.assertEqual(future.result, 'Hello')
-        future = client.sendMessage("Ciao")
+        self.assertEqual(future.result, b'Hello')
+        future = client.sendMessage(b'Ciao')
         yield future
-        self.assertEqual(future.result, 'Ciao')
+        self.assertEqual(future.result, b'Ciao')
         

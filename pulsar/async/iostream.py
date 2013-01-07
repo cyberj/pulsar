@@ -399,7 +399,7 @@ setup using the :meth:`set_close_callback` method."""
                 # We may have queued up a user callback in _handle_read or
                 # _handle_write, so don't close the IOStream until those
                 # callbacks have had a chance to run.
-                self.ioloop.add_callback(self.close)
+                self.ioloop.call_soon(self.close)
                 return
             state = self.ERROR
             if self.reading:

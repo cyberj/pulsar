@@ -6,9 +6,10 @@ import traceback
 import signal
 import errno
 import socket
+import time
 from threading import current_thread
 
-from pulsar import Timeout, AlreadyCancelled, AlreadyCalledError, system
+from pulsar import Timeout, AlreadyCancelled, AlreadyCalledError
 from pulsar.utils.system import IObase, IOpoll, close_on_exec, platform, Waker
 from pulsar.utils.security import gen_unique_id
 from pulsar.utils.log import Synchronized
@@ -22,10 +23,9 @@ __all__ = ['IOLoop', 'PeriodicCallback', 'TimedCall']
 LOGGER = logging.getLogger('pulsar.eventloop')
 
 if sys.version_info >= (3, 3):
-    import time
     timer = time.monotonic
 else:   #pragma    nocover
-    timer = system.default_timer
+    timer = time.time
     
 def file_descriptor(fd):
     if hasattr(fd, 'fileno'):
