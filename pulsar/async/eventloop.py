@@ -85,22 +85,72 @@ class LoopGuard(object):
         loop._on_exit.callback(loop)
 
 
-class ReadWrite(IObase):
-    def __init__(self, read=None, write=None):
-        self.handle_read = read
-        self.handle_write = write
-        self.handle_error = None
+class FileDecriptor(IObase):
+    def __init__(self, fd, io, read=None, write=None, error=None):
+        self.fd = fd
+        self.io = io
+        self.state = self.ERROR
+        if read:
+            self.handle_read = read
+            self.state |= self.READ
+        if write:
+            self.handle_write = write
+            self.state |= self.WRITE
+        self.handle_error = error
+        self.io.register(self.fd, self.state)
 
+    @property
+    def reading(self):
+        return self.state & self.READ
+    
+    @property
+    def writing(self):
+        return self.state & self.WRITE
+    
+    def add_reader(self, callback):
+        self.handle_read = callback
+        self.state |= self.READ
+        self.io.modify(self.fd, self.state)
+        
+    def add_writer(self, callback):
+        self.handle_write = callback
+        self.state |= self.WRITE
+        self.io.modify(self.fd, self.state)
+        
+    def remove_reader(self):
+        state = self.ERROR
+        if self.writing:
+            state |= self.WRITE
+        self.io.modify(self.fd, self.state)
+        return self.writing
+
+    def remove_writer(self):
+        state = self.ERROR
+        if self.reading:
+            state |= self.READ
+        self.io.modify(self.fd, self.state)
+        return self.reading
+    
     def __call__(self, fd, events):
+        reading = self.reading
+        writing = self.writing
         if events & self.READ:
+            reading = False
             if self.handle_read:
                 self.handle_read() 
         if events & self.WRITE:
+            writing = False
             if self.handle_write:
                 self.handle_write()
         if events & self.ERROR:
             if self.handle_write:
                 self.handle_error()
+            return
+        self.state = self.ERROR
+        if reading:
+            self.state |= self.READ
+        if writing:
+            self.state |= self.WRITE
         
         
 class IOLoop(IObase, Synchronized):
@@ -259,34 +309,28 @@ It returns an handle that may be passed to remove_timeout to cancel."""
         self.wake()
         return timeout
 
-    def add_reader(self, fd, callback, *args):
-        cbk = lambda : callback(*args)    
+    def add_reader(self, fd, callback):
         if fd in self._handlers:
-            self._handlers[fd].handle_read = cbk
-            self.update_handler(fd, self.READ)
+            self._handlers[fd].add_reader(cbk)
         else:
-            self.add_handler(fd, ReadWrite(read=cbk), self.READ)
+            self._handlers[fd] = FileDecriptor(fd, self._impl, read=cbk)
         
-    def add_writer(self, fd, callback, *args):
-        cbk = lambda : callback(*args)
+    def add_writer(self, fd, callback):
         if fd in self._handlers:
-            self._handlers[fd].handle_write = cbk
-            self.update_handler(fd, self.WRITE)
+            self._handlers[fd].add_writer(cbk)
         else:
-            self.add_handler(fd, ReadWrite(write=cbk), self.WRITE)
+            self._handlers[fd] = FileDecriptor(fd, self._impl, write=cbk)
         
     def remove_reader(self, fd):
         if fd in self._handlers:
             hnd = self._handlers[fd]
-            hnd.handle_read = None
-            if not hnd.handle_read and not hnd.handle_write:
+            if not hnd.remove_reader():
                 return self.remove_handler(fd)
     
     def remove_writer(self, fd):
         if fd in self._handlers:
             hnd = self._handlers[fd]
-            hnd.handle_write = None
-            if not hnd.handle_read and not hnd.handle_write:
+            if not hnd.remove_reader():
                 return self.remove_handler(fd)
         
     def add_periodic(self, callback, period):
