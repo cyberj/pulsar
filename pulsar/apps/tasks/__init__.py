@@ -227,11 +227,11 @@ class CPUboundServer(pulsar.Application):
 be consumed by the workers.'''
         return self.cfg.task_queue_factory()
 
-    def request_instance(self, worker, fd, request):
+    def request_instance(self, worker, request):
         return request
 
-    def on_event(self, worker, fd, request):
-        request = self.request_instance(worker, fd, request)
+    def on_event(self, worker, request):
+        request = self.request_instance(worker, request)
         if request is not None:
             c = self.local.current_requests
             if c is None:
@@ -326,7 +326,7 @@ Check the :meth:`TaskQueue.monitor_task` callback
 for implementation.'''
         return self.local.scheduler
 
-    def request_instance(self, worker, fd, request):
+    def request_instance(self, worker, request):
         return self.scheduler.get_task(request)
 
     def monitor_task(self, monitor):

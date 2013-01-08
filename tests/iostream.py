@@ -95,7 +95,6 @@ class TestPulsarStreams(unittest.TestCase):
         io = pulsar.AsyncIOStream()
         self.assertEqual(str(io), '(closed)')
         self.assertEqual(io.read(), b'')
-        self.assertEqual(io.state, None)
         self.assertEqual(io.state_code, 'closed')
         conn, sock = pulsar.server_client_sockets()
         io.sock = sock
@@ -121,7 +120,8 @@ class TestPulsarStreams(unittest.TestCase):
                 self.assertEqual(io.state_code, 'connecting')
                 self.assertRaises(RuntimeError, io.connect, self.server.address)
         cbk = _test()
-        # we need to run this test on the ioloop thread
+        # we need to run this test on the ioloop thread so that the connection
+        # is not processed
         io.ioloop.call_soon_threadsafe(cbk)
         yield cbk
         

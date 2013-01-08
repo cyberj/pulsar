@@ -1054,19 +1054,13 @@ this :class:`IOClientRead` can submit another read request.'''
         except socket.error:
             self.close()
             raise
-
+    
     ## INTERNALS
     def _read(self, result=None):
         if not self.sock:
             return
         if self.async:
-            r = self.sock.read()
-            if not self.sock.closed:
-                return r.add_callback(self._got_data, self.close)
-            elif r:
-                return self.parsedata(r)
-            else:
-                raise socket.error('Cannot read. Asynchronous socket is closed')
+            return self.async_read()
         else:
             # Read from a blocking socket
             length = io.DEFAULT_BUFFER_SIZE
@@ -1082,12 +1076,8 @@ this :class:`IOClientRead` can submit another read request.'''
                     if msg is not None:
                         return msg
     
-    def _got_data(self, data):
-        msg = self.parsedata(data)
-        if msg is None:
-            return self._read()
-        else:
-            return msg
+    def async_read(self):
+        raise NotImplementedError()
 
 
 class HttpParseError(ValueError):
@@ -1388,8 +1378,6 @@ class HttpRequest(HttpBase):
 
     The scheme of the of the URI requested. One of http, https
 '''
-    response_class = HttpResponse
-
     _tunnel_host = None
     _has_proxy = False
     def __init__(self, client, url, method, data=None, files=None,
@@ -1397,6 +1385,7 @@ class HttpRequest(HttpBase):
                  headers=None, timeout=None, hooks=None, history=None,
                  allow_redirects=False, max_redirects=10, stream=False):
         self.client = client
+        self.response_class = client.response_class
         self.type, self.host, self.path, self.params,\
         self.query, self.fragment = urlparse(url)
         self.full_url = self._get_full_url()
@@ -1637,6 +1626,7 @@ or asynchronous connections.
     allow_redirects = False
     stream = False
     request_class = HttpRequest
+    response_class = HttpResponse
     '''Class handling requests. Default: :class:`HttpRequest`'''
     connection_pool = HttpConnectionPool
     http_connection = HttpConnection

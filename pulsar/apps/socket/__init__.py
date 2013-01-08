@@ -178,7 +178,7 @@ requests. The request handler is constructued from the
             # connections and othe clean up operations.
             worker.socket_server.on_close()
         
-    def on_event(self, worker, fd, events):
+    def on_event(self, worker):
         connection = worker.socket_server.accept()
         if connection is not None:
             return connection.on_closed

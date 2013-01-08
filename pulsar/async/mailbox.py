@@ -4,7 +4,6 @@ import logging
 import socket
 import time
 import threading
-from multiprocessing.queues import Empty, Queue
 
 from pulsar import create_connection, MailboxError, server_socket,\
                     wrap_socket, CouldNotParse, CommandNotFound,\
@@ -18,8 +17,7 @@ from .transports import AsyncSocketServer,\
 from .access import get_actor
 
 
-__all__ = ['PulsarClient', 'mailbox', 'Mailbox', 'IOQueue',
-           'Empty', 'Queue', 'ActorMessage']
+__all__ = ['PulsarClient', 'mailbox', 'Mailbox', 'ActorMessage']
 
 
 LOGGER = logging.getLogger('pulsar.mailbox')
@@ -242,74 +240,3 @@ arbiter inbox.'''
     
     def close(self):
         pass
-
-
-class QueueWaker(object):
-    '''A waker for :class:`IOQueue`. Used by CPU-bound actors.'''
-    def __init__(self, queue):
-        self._queue = queue
-        self._fd = 'waker'
-
-    def __str__(self):
-        return '%s %s' % (self.__class__.__name__, self._fd)
-
-    def fileno(self):
-        return self._fd
-
-    def wake(self):
-        try:
-            self._queue.put((self._fd, None))
-        except (IOError,TypeError):
-            pass
-
-    def consume(self):
-        pass
-
-    def close(self):
-        pass
-
-
-class IOQueue(object):
-    '''Epoll like class for a IO based on queues rather than sockets.
-The interface is the same as the python epoll_ implementation.
-
-.. _epoll: http://docs.python.org/library/select.html#epoll-objects'''
-    cpubound = True
-    def __init__(self, queue, actor=None):
-        self._queue = queue
-        self._actor = actor
-        self._fds = set()
-        self._empty = ()
-
-    @property
-    def queue(self):
-        '''The underlying distributed queue used for I/O.'''
-        return self._queue
-
-    def register(self, fd, events=None):
-        '''Register a fd descriptor with the io queue object'''
-        self._fds.add(fd)
-
-    def modify(self, fd, events=None):
-        '''Modify a registered file descriptor'''
-        self.unregister(fd)
-        self.register(fd, events)
-
-    def unregister(self, fd):
-        '''Remove a registered file descriptor from the ioqueue object.. '''
-        self._fds.discard(fd)
-
-    def poll(self, timeout=0.5):
-        '''Wait for events. timeout in seconds (float)'''
-        if self._actor:
-            if not self._actor.can_poll():
-                return self._empty
-        try:
-            event = self._queue.get(timeout=timeout)
-        except (Empty,IOError,TypeError,EOFError):
-            return self._empty
-        return (event,)
-
-    def waker(self):
-        return QueueWaker(self._queue)
-

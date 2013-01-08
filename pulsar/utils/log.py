@@ -42,6 +42,7 @@ LOG_LEVELS = {
     "warning": logging.WARNING,
     "info": logging.INFO,
     "debug": logging.DEBUG,
+    "subdebug": SUBDEBUG,
     'none': None
 }
 

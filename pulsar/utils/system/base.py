@@ -85,6 +85,7 @@ class EpollProxy(object):
         self.fd_dict = (self.read_fds, self.write_fds, self.error_fds)
 
     def register(self, fd, events):
+        self.unregister(fd)
         if events & IObase.READ:
             self.read_fds.add(fd)
         if events & IObase.WRITE:
@@ -95,9 +96,8 @@ class EpollProxy(object):
             # but as zero-byte reads by select, so when errors are requested
             # we need to listen for both read and error.
             self.read_fds.add(fd)
-                
+        
     def modify(self, fd, events):
-        self.unregister(fd)
         self.register(fd, events)
 
     def unregister(self, fd):

@@ -98,8 +98,8 @@ An :class:`Actor` for serving a pulsar :class:`Application`.
     def on_info(self, info):
         return self.app.on_info(self, info)
     
-    def on_event(self, fd, event):
-        return self.app.on_event(self, fd, event)
+    def on_event(self, *args):
+        return self.app.on_event(self, *args)
 
 
 class ApplicationMonitor(Monitor):
@@ -149,8 +149,8 @@ class ApplicationMonitor(Monitor):
     def monitor_task(self):
         self.app.monitor_task(self)
         
-    def on_event(self, fd, event):
-        return self.app.on_event(self, fd, event)
+    def on_event(self, *args):
+        return self.app.on_event(self, *args)
     
     def actorparams(self):
         p = Monitor.actorparams(self)
@@ -492,7 +492,7 @@ By default it returns ``None``.'''
     def on_info(self, worker, data):
         return data
 
-    def on_event(self, worker, fd, events):
+    def on_event(self, worker, *args):
         pass
     
     # WORKERS CALLBACKS

@@ -6,13 +6,12 @@ import socket
 import errno
 from collections import deque
 
-from pulsar.utils.system import IObase
 from pulsar import create_socket, server_socket, create_client_socket,\
-                     wrap_socket, defaults, create_connection, CouldNotParse,\
+                     wrap_socket, defaults, create_connection,\
                      get_socket_timeout, Timeout, BaseSocket
 from pulsar.utils.structures import merge_prefix
 from .defer import Deferred, is_async, is_failure, async, maybe_async,\
-                        safe_async, log_failure, NOT_DONE, range
+                        safe_async, log_failure, range
 from .access import get_event_loop
 
 LOGGER = logging.getLogger('pulsar.iostream')
@@ -40,7 +39,7 @@ def loop_timeout(value, timeout, ioloop=None):
         return ioloop.call_later(timeout, _not_called_exception, value)
     
 
-class AsyncIOStream(IObase, BaseSocket):
+class AsyncIOStream(BaseSocket):
     ''':ref:`Framework class <pulsar_framework>` to write and read
 from a non-blocking socket. It is used everywhere in :mod:`pulsar` for
 handling asynchronous :meth:`write` and :meth:`read` operations with
@@ -63,7 +62,6 @@ adapted to pulsar :ref:`concurrent framework <design>`.
 '''
     _error = None
     _socket = None
-    _state = None
     _read_timeout = None
     _read_callback = None
     _read_length = None
@@ -72,8 +70,9 @@ adapted to pulsar :ref:`concurrent framework <design>`.
     _connect_callback = None
 
     def __init__(self, socket=None, max_buffer_size=None,
-                 read_chunk_size=None, timeout=None):
+                 read_chunk_size=None, timeout=None, streaming=False):
         self.sock = socket
+        self.streaming = streaming
         self._read_callback_timeout = timeout
         self.max_buffer_size = max_buffer_size or 104857600
         self.read_chunk_size = read_chunk_size or io.DEFAULT_BUFFER_SIZE
@@ -108,10 +107,6 @@ adapted to pulsar :ref:`concurrent framework <design>`.
     def closed(self):
         '''Boolean indicating if the :attr:`sock` is closed.'''
         return self.sock is None
-
-    @property
-    def state(self):
-        return self._state
     
     @property
     def error(self):
@@ -140,7 +135,6 @@ adapted to pulsar :ref:`concurrent framework <design>`.
     def _set_socket(self, sock):
         if self._socket is None:
             self._socket = wrap_socket(sock)
-            self._state = None
             if self._socket is not None:
                 self._socket.settimeout(0)
         else:
@@ -162,23 +156,23 @@ connection is pending, in which case the data will be written
 as soon as the connection is ready.  Calling IOStream read
 methods before the socket is connected works on some platforms
 but is non-portable."""
-        if self._state is None and not self.connecting:
-            if self.sock is None:
-                self.sock = create_client_socket(address)
-            try:
-                self.sock.connect(address)
-            except socket.error as e:
-                # In non-blocking mode connect() always raises an exception
-                if not async_error(e):
-                    LOGGER.warning('Connect error on %s: %s', self, e)
-                    self.close()
-                    return
-            callback = Deferred(description='%s connect callback' % self)
-            self._connect_callback = callback
-            self._add_io_state(self.WRITE)
-            return callback
-        else:
-            raise RuntimeError('Cannot connect. State is %s.' % self.state_code)
+        if self.connecting:
+            raise RuntimeError('Already Connecting')
+        if self.sock is None:
+            self.sock = create_client_socket(address)
+        try:
+            self.sock.connect(address)
+        except socket.error as e:
+            # In non-blocking mode connect() always raises an exception
+            if not async_error(e):
+                LOGGER.warning('Connect error on %s: %s', self, e)
+                self.close()
+                return
+        callback = Deferred(description='%s connect callback' % self)
+        self._connect_callback = callback
+        self.ioloop.add_connector(self.sock, self._handle_connect)
+        self.ioloop.add_error_handler(self.sock, self._handle_error)
+        return callback
 
     def read(self, length=None):
         """Starts reading data from the :attr:`sock`. It returns a
@@ -197,16 +191,16 @@ One common pattern of usage::
     io.read().add_callback(parse)
 
 """
-        if self.reading:
-            raise RuntimeError("Asynchronous stream %s already reading!" %
-                               str(self.address))
         if self.closed:
             return self._get_buffer(self._read_buffer)
         else:
             callback = Deferred(description='%s read callback' % self)
             self._read_callback = callback
             self._read_length = length
-            self._add_io_state(self.READ)
+            eventloop = self.ioloop
+            if self.sock is not None:
+                eventloop.add_reader(self.sock, self._handle_read)
+                eventloop.add_error_handler(self.sock, self._handle_error)
             if self._read_timeout:
                 try:
                     self.ioloop.remove_timeout(self._read_timeout)
@@ -214,7 +208,7 @@ One common pattern of usage::
                     pass
             self._read_timeout = loop_timeout(callback,
                                               self._read_callback_timeout,
-                                              self.ioloop)
+                                              eventloop)
             return callback
     recv = read
 
@@ -234,13 +228,17 @@ overwritten with this new callback.
             else:
                 self._write_buffer.append(data)
         #
-        if not self.connecting:
+        # If not connecting or not waiting for a write callback do the writing
+        if not self.connecting and not self._write_callback and self.writing:
+            # Try to write
             tot_bytes = self._handle_write()
             # data still in the buffer
-            if self._write_buffer:
+            if self._write_buffer and self.sock is not None:
                 callback = Deferred(description='%s write callback' % self)
                 self._write_callback = callback
-                self._add_io_state(self.WRITE)
+                eventloop = self.ioloop
+                eventloop.add_writer(self.sock, self._handle_write)
+                eventloop.add_error_handler(self.sock, self._handle_error)
                 return callback
             else:
                 return tot_bytes
@@ -253,8 +251,8 @@ setup using the :meth:`set_close_callback` method."""
             exc_info = sys.exc_info()
             if any(exc_info):
                 self._error = exc_info[1]
-            if self._state is not None:
-                self.ioloop.remove_handler(self.fileno())
+            if self.sock is not None:
+                self.ioloop.remove_handler(self.sock)
             self.sock.close()
             self._socket = None
             if self._close_callback:
@@ -302,7 +300,7 @@ setup using the :meth:`set_close_callback` method."""
     def _may_run_callback(self, c, result=None):
         try:
             # Make sure that any uncaught error is logged
-            log_failure(c.callback(result))
+            return log_failure(c.callback(result))
         except:
             # Close the socket on an uncaught exception from a user callback
             # (It would eventually get closed when the socket object is
@@ -311,9 +309,16 @@ setup using the :meth:`set_close_callback` method."""
             self.close()
 
     def _handle_connect(self):
+        self.ioloop.remove_connector(self.sock)
         callback = self._connect_callback
         self._connect_callback = None
-        self._may_run_callback(callback)
+        result = maybe_async(self._may_run_callback(callback))
+        # If writing handle it
+        if self.writing:
+            if is_async(result):
+                result.add_callback(self.write)
+            else:
+                self.write(None)
 
     def _handle_read(self):
         try:
@@ -333,6 +338,8 @@ setup using the :meth:`set_close_callback` method."""
         if result == 0:
             self.close()
         buffer = self._get_buffer(self._read_buffer)
+        if self.sock:
+            self.ioloop.remove_reader(self.sock)
         if self.reading:
             callback = self._read_callback
             self._read_callback = None
@@ -364,12 +371,18 @@ setup using the :meth:`set_close_callback` method."""
                     LOGGER.warning("Write error on %s: %s", self, e)
                     self.close()
                     return
-        if not self._write_buffer and self._write_callback:
-            callback = self._write_callback
-            self._write_callback = None
-            self._may_run_callback(callback, tot_bytes)
+        if not self._write_buffer:
+            if self._write_callback:
+                callback = self._write_callback
+                self._write_callback = None
+                self._may_run_callback(callback, tot_bytes)
+            if self.sock:
+                self.ioloop.remove_writer(self.sock)
         return tot_bytes
 
+    def _handle_error(self):
+        self.ioloop.call_soon(self.close)
+        
     def _check_closed(self):
         if not self.sock:
             raise IOError("Stream is closed")
@@ -379,52 +392,4 @@ setup using the :meth:`set_close_callback` method."""
         dq.clear()
         return buff
 
-    def _handle_events(self, fd, events):
-        # This is the actual callback from the event loop
-        if not self.sock:
-            LOGGER.warning("Got events for closed stream %d", fd)
-            return
-        try:
-            if events & self.READ:
-                self._handle_read()
-            if not self.sock:
-                return
-            if events & self.WRITE:
-                if self.connecting:
-                    self._handle_connect()
-                self._handle_write()
-            if not self.sock:
-                return
-            if events & self.ERROR:
-                # We may have queued up a user callback in _handle_read or
-                # _handle_write, so don't close the IOStream until those
-                # callbacks have had a chance to run.
-                self.ioloop.call_soon(self.close)
-                return
-            state = self.ERROR
-            if self.reading:
-                state |= self.READ
-            if self.writing:
-                state |= self.WRITE
-            if state != self._state:
-                assert self._state is not None, \
-                    "shouldn't happen: _handle_events without self._state"
-                self._state = state
-                self.ioloop.update_handler(self.fileno(), self._state)
-        except:
-            self.close()
-            raise
-
-    def _add_io_state(self, state):
-        if self.sock is None:
-            # connection has been closed, so there can be no future events
-            return
-        if self._state is None:
-            # If the state was not set add the handler to the event loop
-            self._state = self.ERROR | state
-            self.ioloop.add_handler(self, self._handle_events, self._state)
-        elif not self._state & state:
-            # update the handler
-            self._state = self._state | state
-            self.ioloop.update_handler(self, self._state)
 

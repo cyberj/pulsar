@@ -143,7 +143,8 @@ In this case it returns the :attr:`Deferred.result` attribute.'''
         except:
             val = sys.exc_info()
     if is_async(val):
-        val = val.result if val.called and not val.callbacks else val
+        if val.called and not val.paused:
+            val = val.result
         return wrap_deferred(val)
     else:
         return as_failure(val)
@@ -344,6 +345,60 @@ class Failure(object):
             for e in self:
                 log.critical(self.msg, exc_info=e)
 
+
+class _Continuation(object):
+    __slots__ = ('chainee')
+    def __init__(self, chainee):
+        self.chainee = chainee
+
+        
+def run_callbacks(chain):
+    # Run callbacks of deferred in the chain
+    while chain:
+        self = chain[-1]
+        if self.paused:
+            # paused, return
+            return
+        finished = True
+        while self.callbacks:
+            callbacks = self.callbacks.popleft()
+            callback = callbacks[is_failure(self.result)]
+            # Avoid recursion if we can.
+            if isinstance(callback, _Continuation):
+                chainee = callback.chainee
+                chainee.result = self.result
+                self.result = None
+                chainee.paused -= 1
+                chain.append(chainee)
+                # Delay cleaning this Deferred and popping it from the chain
+                # until after we've dealt with chainee.
+                finished = False
+                break   # exit the callback execution
+            #
+            try:
+                self._runningCallbacks = True
+                try:
+                    self.result = maybe_async(callback(self.result))
+                finally:
+                    self._runningCallbacks = False
+            except Exception as e:
+                self._add_exception(e)
+            else:
+                if is_async(self.result):
+                    # The result is asynchronous and not ready. Pause the
+                    # evaluation of callbacks
+                    self.paused = self.paused + 1
+                    cont = _Continuation(self)
+                    # Note: self.result has no result, so it's not
+                    # running its callbacks right now.
+                    self.result.callbacks.append((cont, cont))
+                    break
+        if finished:
+            # This Deferred is done, pop it from the chain and move back up
+            # to the Deferred which supplied us with our result.
+            chain.pop()
+
+                
 ############################################################### Deferred
 class Deferred(object):
     """The main class of the pulsar asynchronous tools.
@@ -437,44 +492,12 @@ this point, :meth:`add_callback` will run the *callbacks* immediately.
         self.result = as_failure(result)
         self._called = True
         self._run_callbacks()
-        return self.result
 
     ##################################################    INTERNAL METHODS
     def _run_callbacks(self):
-        if not self._called or self._runningCallbacks or self.paused:
+        if not self._called or self._runningCallbacks:
             return
-        while self.callbacks:
-            callbacks = self.callbacks.popleft()
-            callback = callbacks[is_failure(self.result)]
-            try:
-                self._runningCallbacks = True
-                try:
-                    self.result = maybe_async(callback(self.result))
-                finally:
-                    self._runningCallbacks = False
-            except Exception as e:
-                self._add_exception(e)
-            else:
-                if isinstance(self.result, Deferred):
-                    # Add a pause
-                    self._pause()
-                    # Add a callback to the result to resume callbacks
-                    self.result.add_both(self._continue)
-                    break
-
-    def _pause(self):
-        """Stop processing until :meth:`unpause` is called."""
-        self.paused += 1
-
-    def _unpause(self):
-        """Process all callbacks made since :meth:`pause` was called."""
-        self.paused -= 1
-        self._run_callbacks()
-
-    def _continue(self, result):
-        self.result = result
-        self._unpause()
-        return self.result
+        run_callbacks([self])
 
     def _add_exception(self, e):
         if not isinstance(self.result, Failure):

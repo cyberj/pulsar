@@ -9,14 +9,35 @@ from .iostream import AsyncIOStream
 __all__ = ['HttpClient']
     
 
+
+class AsyncRead(object):
+    
+    def async_read(self):
+        return safe_async(self.keep_reading, max_errors=1).add_errback(self.close)
+        
+    def keep_reading(self):
+        msg = None
+        while not self.sock.closed:
+            future = self.sock.read()
+            yield future
+            msg = self.parsedata(future.outcome)
+            if msg is not None:
+                break
+        yield msg
+
+
+class HttpResponse(AsyncRead, httpurl.HttpResponse):
+    pass
+    
+    
 class HttpConnection(httpurl.HttpConnection):
     
     def connect(self):
         if self.timeout == 0:
             self.sock = AsyncIOStream()
-            self.sock.connect((self.host, self.port))
+            c = self.sock.connect((self.host, self.port))
             if self._tunnel_host:
-                self._tunnel()
+                c.add_callback(lambda r: self._tunnel())
         else:
             httpurl.HttpConnection.connect(self)
             
@@ -35,4 +56,5 @@ class HttpClient(httpurl.HttpClient):
     timeout = 0
     client_version = pulsar.SERVER_SOFTWARE
     http_connection = HttpConnection
+    response_class = HttpResponse
     

@@ -44,13 +44,29 @@ class TimedCall(object):
     def __init__(self, deadline, callback, args, canceller):
         self.deadline = deadline
         self.canceller = canceller
-        self.func = callback
-        self.args = args
-        self.cancelled = self.called = False
+        self._callback = callback
+        self._args = args
+        self._cancelled = self._called = False
 
     def __lt__(self, other):
         return self.deadline < other.deadline
         
+    @property
+    def cancelled(self):
+        return self._cancelled
+    
+    @property
+    def called(self):
+        return self._called
+    
+    @property
+    def callback(self):
+        return self._callback
+    
+    @property
+    def args(self):
+        return self._args
+    
     def cancel(self):
         '''Attempt to cancel the callback.'''
         if self.cancelled:
@@ -59,9 +75,12 @@ class TimedCall(object):
             raise AlreadyCalledError()
         else:
             self.canceller(self)
-            self.cancelled = True
-            del self.func
+            self._cancelled = True
 
+    def __call__(self):
+        self._called = True
+        self._callback(*self._args)
+        
 
 class LoopGuard(object):
     '''Context manager for the eventloop'''
@@ -84,21 +103,29 @@ class LoopGuard(object):
         loop.logger.subdebug('Exiting event loop')
         loop._on_exit.callback(loop)
 
+pass_through = lambda: None
 
-class FileDecriptor(IObase):
-    def __init__(self, fd, io, read=None, write=None, error=None):
+class FileDescriptor(IObase):
+    def __init__(self, fd, eventloop, read=None, write=None, connect=None,
+                 error=None):
         self.fd = fd
-        self.io = io
-        self.state = self.ERROR
+        self.eventloop = eventloop
+        self.state = None
+        self._connecting = False
+        self.handle_write = None
+        self.handle_read = None
+        if connect:
+            self.add_connector(connect)
+        elif write:
+            self.add_writer(write)
         if read:
-            self.handle_read = read
-            self.state |= self.READ
-        if write:
-            self.handle_write = write
-            self.state |= self.WRITE
-        self.handle_error = error
-        self.io.register(self.fd, self.state)
+            self.add_reader(read)
+        self.handle_error = error or pass_through
 
+    @property
+    def poller(self):
+        return self.eventloop._impl
+    
     @property
     def reading(self):
         return self.state & self.READ
@@ -107,50 +134,83 @@ class FileDecriptor(IObase):
     def writing(self):
         return self.state & self.WRITE
     
+    @property
+    def connecting(self):
+        return self._connecting
+    
+    @property
+    def state_code(self):
+        s = []
+        if self.state is None:
+            return 'closed'
+        if self.connecting:
+            s.append('connecting')
+        elif self.writing:
+            s.append('writing')
+        if self.reading:
+            s.append('reading')
+        return ' '.join(s) if s else 'idle'
+    
+    def add_connector(self, callback):
+        if self.state is not None:
+            raise RuntimeError('Cannot connect. State is %s.' % self.state_code)
+        self._connecting = True
+        self.add_writer(callback)
+        
     def add_reader(self, callback):
-        self.handle_read = callback
-        self.state |= self.READ
-        self.io.modify(self.fd, self.state)
+        if not self.handle_read:
+            state = self.state or self.ERROR
+            self.handle_read = callback
+            self.modify_state(state | self.READ)
+        else:
+            raise RuntimeError("Asynchronous stream already reading!")
         
     def add_writer(self, callback):
-        self.handle_write = callback
-        self.state |= self.WRITE
-        self.io.modify(self.fd, self.state)
+        if not self.handle_write:
+            state = self.state or self.ERROR
+            self.handle_write = callback
+            self.modify_state(state | self.WRITE)
+        else:
+            raise RuntimeError("Asynchronous stream already writing!")
         
+    def remove_connector(self):
+        self._connecting = False
+        return self.remove_writer()
+    
     def remove_reader(self):
+        '''Remove reader and return True if writing'''
         state = self.ERROR
         if self.writing:
             state |= self.WRITE
-        self.io.modify(self.fd, self.state)
+        self.handle_read = None
+        self.modify_state(state)
         return self.writing
 
     def remove_writer(self):
+        '''Remove writer and return True if reading'''
         state = self.ERROR
         if self.reading:
             state |= self.READ
-        self.io.modify(self.fd, self.state)
+        self.handle_write = None
+        self.modify_state(state)
         return self.reading
     
     def __call__(self, fd, events):
-        reading = self.reading
-        writing = self.writing
         if events & self.READ:
-            reading = False
-            if self.handle_read:
-                self.handle_read() 
+            self.handle_read()
         if events & self.WRITE:
-            writing = False
-            if self.handle_write:
-                self.handle_write()
+            self.handle_write()
         if events & self.ERROR:
-            if self.handle_write:
-                self.handle_error()
-            return
-        self.state = self.ERROR
-        if reading:
-            self.state |= self.READ
-        if writing:
-            self.state |= self.WRITE
+            self.handle_error()
+            
+    def modify_state(self, state):
+        if self.state != state:
+            if self.state is None:
+                self.state = state
+                self.poller.register(self.fd, state)
+            else:
+                self.state = state
+                self.poller.modify(self.fd, state)
         
         
 class IOLoop(IObase, Synchronized):
@@ -203,6 +263,7 @@ conform with pep-3156.
 
     def __init__(self, io=None, logger=None, poll_timeout=None):
         self._impl = io or IOpoll()
+        self.fd_factory = getattr(self._impl, 'fd_factory', FileDescriptor)
         self.poll_timeout = poll_timeout if poll_timeout else self.poll_timeout
         self.logger = logger or LOGGER
         if hasattr(self._impl, 'fileno'):
@@ -217,34 +278,11 @@ conform with pep-3156.
         self.num_loops = 0
         self._waker = getattr(self._impl, 'waker', Waker)()
         self._on_exit = None
-        self.add_handler(self._waker,
-                         lambda fd, events: self._waker.consume(),
-                         self.READ)
+        self.add_reader(self._waker, self._waker.consume)
 
     @property
     def cpubound(self):
         return getattr(self._impl, 'cpubound', False)
-
-    def add_handler(self, fd, handler, events):
-        """Registers the given *handler* to receive the given events for the
-file descriptor *fd*.
-
-:parameter fd: A file descriptor or an object with the ``fileno`` method.
-:parameter handler: A callable which will be called when events occur on the
-    file descriptor *fd*.
-:rtype: ``True`` if the handler was succesfully added."""
-        if fd is not None:
-            fdd = file_descriptor(fd)
-            if fdd not in self._handlers:
-                self._handlers[fdd] = handler
-                self._impl.register(fdd, events | self.ERROR)
-                return True
-            else:
-                self.logger.debug('Handler for %s already available.', fd)
-
-    def update_handler(self, fd, events):
-        """Changes the events we listen for fd."""
-        self._impl.modify(file_descriptor(fd), events | self.ERROR)
 
     def remove_handler(self, fd):
         """Stop listening for events on fd."""
@@ -309,29 +347,53 @@ It returns an handle that may be passed to remove_timeout to cancel."""
         self.wake()
         return timeout
 
-    def add_reader(self, fd, callback):
+    # METHODS FOR REGISTERING CALLBACKS ON FILE DESCRIPTORS
+    def add_connector(self, fd, callback):
+        fd = file_descriptor(fd)
         if fd in self._handlers:
-            self._handlers[fd].add_reader(cbk)
+            self._handlers[fd].add_connector(callback)
         else:
-            self._handlers[fd] = FileDecriptor(fd, self._impl, read=cbk)
+            self._handlers[fd] = self.fd_factory(fd, self, connect=callback)
+            
+    def add_reader(self, fd, callback):
+        fd = file_descriptor(fd)
+        if fd in self._handlers:
+            self._handlers[fd].add_reader(callback)
+        else:
+            self._handlers[fd] = self.fd_factory(fd, self, read=callback)
         
     def add_writer(self, fd, callback):
+        fd = file_descriptor(fd)
         if fd in self._handlers:
-            self._handlers[fd].add_writer(cbk)
+            self._handlers[fd].add_writer(callback)
         else:
-            self._handlers[fd] = FileDecriptor(fd, self._impl, write=cbk)
+            self._handlers[fd] = self.fd_factory(fd, self, write=callback)
+        
+    def add_error_handler(self, fd, callback):
+        fd = file_descriptor(fd)
+        if fd in self._handlers:
+            self._handlers[fd].handle_error = callback
+            
+    def remove_connector(self, fd):
+        fd = file_descriptor(fd)
+        if fd in self._handlers:
+            self._handlers[fd].remove_connector()
         
     def remove_reader(self, fd):
+        '''Cancels the current read callback for file descriptor fd,
+if one is set. A no-op if no callback is currently set for the file
+descriptor.'''
+        fd = file_descriptor(fd)
         if fd in self._handlers:
-            hnd = self._handlers[fd]
-            if not hnd.remove_reader():
-                return self.remove_handler(fd)
+            self._handlers[fd].remove_reader()
     
     def remove_writer(self, fd):
+        '''Cancels the current write callback for file descriptor fd,
+if one is set. A no-op if no callback is currently set for the file
+descriptor.'''
+        fd = file_descriptor(fd)
         if fd in self._handlers:
-            hnd = self._handlers[fd]
-            if not hnd.remove_reader():
-                return self.remove_handler(fd)
+            self._handlers[fd].remove_writer()
         
     def add_periodic(self, callback, period):
         """Add a :class:`PeriodicCallback` to the event loop."""
@@ -349,11 +411,10 @@ It returns an handle that may be passed to remove_timeout to cancel."""
 by the :meth:`add_timeout` method."""
         self._scheduled.remove(timeout)
 
-    ############################################################ INTERNALS    
+    ############################################################ INTERNALS
     def _run_callback(self, callback):
         try:
-            callback.called = True
-            callback.func(*callback.args)
+            callback()
         except EXIT_EXCEPTIONS:
             raise
         except:

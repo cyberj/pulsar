@@ -6,7 +6,7 @@ class TestStreamingHttpClient(httpurl.TestHttpClientBase):
     def test_stream_response(self):
         http = self.client(stream=True)
         self.assertTrue(http.stream)
-        future = http.get(self.httpbin('stream/3000/200'))
+        future = http.get(self.httpbin('stream/3000/2'))
         yield future
         response = future.result
         self.assertEqual(response.status_code, 200)
@@ -16,5 +16,5 @@ class TestStreamingHttpClient(httpurl.TestHttpClientBase):
         self.assertTrue(data)
         
         
-class TestStreamingHttpClientWithProxy(TestStreamingHttpClient):
-    with_proxy = True
+#class TestStreamingHttpClientWithProxy(TestStreamingHttpClient):
+#    with_proxy = True

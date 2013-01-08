@@ -2,6 +2,7 @@ from .access import *
 from .defer import *
 from .iostream import *
 from .transports import *
+from .queue import *
 from .mailbox import *
 from .eventloop import *
 from .proxy import *

@@ -82,16 +82,17 @@ class TestDeferred(unittest.TestCase):
         d = Deferred()
         d.add_callback(lambda r : Cbk(r))
         self.assertFalse(d.called)
-        result = d.callback('ciao')
+        d.callback('ciao')
+        # check call and paused
         self.assertTrue(d.called)
-        self.assertEqual(d.paused,1)
-        self.assertTrue(is_async(result))
-        self.assertEqual(len(result.callbacks), 1)
-        self.assertFalse(result.called)
-        result.set_result('luca')
-        self.assertTrue(result.called)
-        self.assertEqual(result.result,('ciao','luca'))
-        self.assertEqual(d.paused,0)
+        self.assertEqual(d.paused, 1)
+        self.assertTrue(is_async(d.result))
+        self.assertEqual(len(d.result.callbacks), 1)
+        self.assertFalse(d.result.called)
+        d.result.set_result('luca')
+        self.assertTrue(d.called)
+        self.assertEqual(d.result, ('ciao','luca'))
+        self.assertEqual(d.paused, 0)
         
     def testDeferredCallbackInGenerator(self):
         d = Deferred()
@@ -144,8 +145,24 @@ class TestDeferred(unittest.TestCase):
         self.assertTrue(a.called)
         self.assertTrue(is_failure(d.result))
         
-    def testSafeAsync(self):
-        pass
+    def testNestedDeferred(self):
+        nest = 50
+        d1 = Deferred()
+        de = d1
+        called = []
+        class print_info:
+            def __init__(self, d):
+                self.d = d
+            def __call__(self, result):
+                called.append(int(self.d._description.split()[-1]))
+                self.d.callback(result)
+        for r in range(nest):
+            d = Deferred(description='deferred %s' % r)
+            de.add_both(print_info(d))
+            de = d
+        d1.callback(1)
+        self.assertEqual(de.result, 1)
+        self.assertEqual(called, list(range(nest)))
         
         
 class TestMultiDeferred(unittest.TestCase):

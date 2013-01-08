@@ -165,10 +165,46 @@ obtained from a server socket via the ``connect`` function).
     read_timeout = property(_get_read_timeout, _set_read_timeout) 
 
 
-class ClientSocket(ClientSocketHandler, IOClientRead):
+class AsyncRead(object):
+        
+    def async_read(self):
+        return self.keep_reading().add_errback(self.close)
+        
+    @async(max_errors=1)
+    def keep_reading(self):
+        msg = None
+        while not self.sock.closed:
+            future = self.sock.read()
+            yield future
+            msg = self.parsedata(future.outcome)
+            if msg is not None:
+                break
+        yield msg
+        
+        
+class ClientResponse(AsyncRead, IOClientRead):
+    
+    def __init__(self, client):
+        self.client = client
+        self.sock = client.sock
+        self.finished = Deferred()
+    
+    def parsedata(self, data):
+        return self.client.parsedata(data)
+    
+    def begin(self, data):
+        self.client.send(data)
+        return self.async_read().add_both(self.finished.callback)
+    
+    def close(self, result=None):
+        self.client.close()
+    
+    
+class ClientSocket(ClientSocketHandler):
     '''Synchronous/Asynchronous client for a remote socket server. This client
 maintain a connection with remote server and exchange data by writing and
 reading from the same socket connection.'''
+    response_class = ClientResponse
     def __init__(self, *args, **kwargs):
         super(ClientSocket, self).__init__(*args, **kwargs)
         self.exec_queue = deque()
@@ -191,18 +227,14 @@ reading from the same socket connection.'''
 and executed in an orderly fashion. For asynchronous connection it returns
 a :class:`Deferred` called once data has been received from the server and
 parsed.'''
-        if self.async:
-            cbk = Deferred()
-            if data:
-                cbk.add_both(self._got_result)
-                self.exec_queue.append((data, cbk))
-                self.sock.ioloop.call_soon_threadsafe(self._consume_next)
+        if data:
+            response = self.response_class(self)
+            if self.async:
+                self.sock.ioloop.call_soon_threadsafe(response.begin, data)
+                return response.finished
             else:
-                cbk.callback(None)
-            return cbk
-        elif data:
-            self.send(data)
-            return self._read()
+                self.send(data)
+                return response.read()
         
     def parsedata(self, data):
         '''We got some data to parse'''
@@ -216,6 +248,9 @@ parsed.'''
         if not self.processing and self.exec_queue:
             self.processing = True
             data, cbk = self.exec_queue.popleft()
+            response = self.response_class()
+            response.connection = self
+            
             msg = safe_async(self.send, (data,))\
                     .add_callback(self._read, self.close)
             msg = maybe_async(msg)
@@ -261,8 +296,8 @@ class ReconnectingClient(Client):
     def send(self, data):
         self.reconnect()
         return super(ReconnectingClient, self).send(data)
-
-
+        
+        
 class AsyncResponse(object):
     '''An asynchronous server response is created once an
 :class:`AsyncConnection` has available parsed data from a read operation.
@@ -505,16 +540,14 @@ constructued each time a new connection has been established by the
         # add new_connection READ handler to the eventloop and starts the
         # eventloop if it was not already started.
         self.actor.logger.debug('Registering %s with event loop.', self)
-        self.ioloop.add_handler(self,
-                                self._on_connection,
-                                self.ioloop.READ)
+        self.ioloop.add_reader(self, self._on_connection)
         self.ioloop.start()
 
-    def _on_connection(self, fd, events):
+    def _on_connection(self):
         '''Called when a new connection is available.'''
         # obtain the client connection
         for callback in self.on_connection_callbacks:
-            c = callback(fd, events)
+            c = callback()
             if c is not None:
                 return c
         return self.accept()

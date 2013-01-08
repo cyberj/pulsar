@@ -25,7 +25,8 @@ from .proxy import ActorProxy, ActorMessage, get_command, get_proxy
 from .defer import make_async, is_failure, iteritems, itervalues,\
                      pickle, async, log_failure, is_async,\
                      as_failure, EXIT_EXCEPTIONS
-from .mailbox import IOQueue, mailbox
+from .queue import IOQueue
+from .mailbox import mailbox
 from .access import set_local_data, is_mainthread, get_actor, remove_actor
 
 
@@ -294,7 +295,7 @@ parameters *params*. It return a :class:`ActorMessage`.'''
     def put(self, request):
         '''Put a *request* into the :attr:`ioqueue` if available.'''
         if self.ioqueue:
-            self.ioqueue.put(('request', request))
+            self.ioqueue.put(request)
         else:
             self.logger.error("Trying to put a request on task queue,\
  but there isn't one!")
@@ -351,13 +352,13 @@ mean it is running.'''
     ##    EVENT HANDLING
     ############################################################################
     @async()
-    def handle_fd_event(self, fd, event):
+    def handle_fd_event(self, *args):
         '''This function should be used when registering events
  on file descriptors registered with the :attr:`requestloop`.'''
         self.request_processed += 1
         self.concurrent_requests += 1
         try:
-            future = make_async(self.on_event(fd, event))
+            future = make_async(self.on_event(*args))
         except Exception as e:
             result = as_failure(e)
         else:
@@ -380,7 +381,7 @@ therefore this is a chance to setup to perform custom initialisation
 before the actor starts running.'''
         pass
 
-    def on_event(self, fd, event):
+    def on_event(self, *args):
         '''Handle an event on a file descriptor *fd*. This is what defines the
 life of an actor.'''
         pass
@@ -529,9 +530,7 @@ if *proxy* is not a class:`ActorProxy` instance raise an exception.'''
                                   logger=self.logger)
         # If CPU bound add the request handler to the request loop
         if self.cpubound:
-            self.requestloop.add_handler('request',
-                                          self.handle_fd_event,
-                                          self.requestloop.READ)
+            self.requestloop.add_reader('request', self.handle_fd_event)
         if self.is_process():
             random.seed()
             proc_name = "%s-%s" % (self.cfg.proc_name, self)
